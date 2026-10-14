@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	Env         string `yaml:"env" env-default:"local"`
-	StoragePath string `yaml:"storage_path" env-required:"true"`
-	GRPC        GRPC   `yaml:"grpc" env-requierd:"true"`
+	Env         string        `yaml:"env" env-default:"local"`
+	StoragePath string        `yaml:"storage_path"`
+	GRPC        GRPC          `yaml:"grpc" env-required:"true"`
+	TokenTTL    time.Duration `yaml:"token_ttl" env-default:"1h"`
 }
 
 type GRPC struct {
-	Port    int64     `yaml:"port" env-required:"true"`
-	Timeout time.Time `yaml:"timeout" env-default:"5s"`
+	Port    int           `yaml:"port" env-required:"true"`
+	Timeout time.Duration `yaml:"timeout" env-default:"5s"`
 }
 
 func MustLoad() *Config {

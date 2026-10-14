@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sso/internal/app"
 	"sso/internal/config"
 	"sso/internal/logger"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load("home/sterris/sso/.env"); err != nil {
+	if err := godotenv.Load("/home/sterris/sso/.env"); err != nil {
 		log.Fatal("Cannot load .env")
 	}
 
@@ -20,5 +21,9 @@ func main() {
 	log.Info("logger start")
 
 	log.Debug("debug logger start")
+
+	application := app.New(log, cfg.GRPC.Port, cfg.StoragePath, cfg.TokenTTL)
+
+	application.GRPCServer.MustRun()
 
 }

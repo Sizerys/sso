@@ -1,16 +1,18 @@
 module sso
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
+	github.com/joho/godotenv v1.5.1
+	golang.org/x/crypto v0.46.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
+	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
