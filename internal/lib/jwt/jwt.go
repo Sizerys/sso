@@ -5,7 +5,7 @@ import (
 
 	"sso/internal/domain/models"
 
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func NewToken(user models.User, app models.App, duration time.Duration) (string, error) {
