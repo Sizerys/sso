@@ -43,6 +43,14 @@ func (p *PostgreSQLWrapper) AppSecret(ctx context.Context, name string) (string,
 	return AppSecret(ctx, p.pool, name)
 }
 
+func (p *PostgreSQLWrapper) SaveRefreshToken(ctx context.Context, userID int64, appID int32, tokenHash string, expires time.Time) (int64, error) {
+	return SaveRefreshToken(ctx, p.pool, userID, appID, tokenHash, expires)
+}
+
+func (p *PostgreSQLWrapper) RefreshToken(ctx context.Context, userID int64) (*models.Token, error) {
+	return RefreshToken(ctx, p.pool, userID)
+}
+
 func SaveUser(ctx context.Context, storage *pgxpool.Pool, email string, passHash []byte) (int64, error) {
 	const sqlQuery = "INSERT INTO users (email, pass_hash) VALUES($1, $2) RETURNING id;"
 	var id int64
