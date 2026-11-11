@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,9 +10,11 @@ import (
 	"sso/internal/domain/models"
 	sl "sso/internal/lib/error"
 	"sso/internal/lib/jwt"
+	"sso/internal/lib/refresh"
 	"sso/internal/storage"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -20,11 +23,13 @@ var (
 )
 
 type Auth struct {
-	log          *slog.Logger
-	saverUser    SaverUser
-	userProvider UserProvide
-	appProvider  AppProvider
-	tokenTTL     time.Duration
+	log             *slog.Logger
+	saverUser       SaverUser
+	userProvider    UserProvider
+	appProvider     AppProvider
+	rtStorage       RefreshTokenStorage
+	tokenTTL        time.Duration
+	refreshTokenTTL time.Duration
 }
 
 type SaverUser interface {
@@ -34,28 +39,42 @@ type SaverUser interface {
 	) (int64, error)
 }
 
-type UserProvide interface {
+type RefreshTokenStorage interface {
+	SaveRefreshToken(ctx context.Context, userID int64,
+		tokenHash []byte, expires time.Time) error
+	RefreshToken(ctx context.Context, refreshToken []byte) (*models.RefreshToken, error)
+	RevokeRefreshToken(ctx context.Context, userID int64) (int64, error)
+	RevokeAllUsersRefreshToken(ctx context.Context, storage *pgxpool.Pool) error
+	UserByID(ctx context.Context, storage *pgxpool.Pool,
+		email string) (models.User, error)
+}
+
+type UserProvider interface {
 	User(ctx context.Context, email string) (models.User, error)
+	UserByID(ctx context.Context, userID int64) (models.User, error)
 	isAdmin(ctx context.Context, ID int64) (bool, error)
 }
 
 type AppProvider interface {
-	App(ctx context.Context, appID int64) (models.App, error)
+	App(ctx context.Context, appID int32) (models.App, error)
 }
 
 func New(
 	log *slog.Logger,
 	saverUser SaverUser,
-	userProvider UserProvide,
+	userProvider UserProvider,
 	appProvider AppProvider,
+	rtStorage RefreshTokenStorage,
 	cfg config.Config,
 ) *Auth {
 	return &Auth{
-		log:          log,
-		saverUser:    saverUser,
-		userProvider: userProvider,
-		appProvider:  appProvider,
-		tokenTTL:     cfg.TokenTTL,
+		log:             log,
+		saverUser:       saverUser,
+		userProvider:    userProvider,
+		appProvider:     appProvider,
+		rtStorage:       rtStorage,
+		tokenTTL:        cfg.TokenTTL,
+		refreshTokenTTL: cfg.RefreshTokenTTL,
 	}
 }
 
@@ -63,8 +82,8 @@ func (a *Auth) Login(
 	ctx context.Context,
 	email string,
 	password string,
-	appID int64,
-) (string, error) {
+	appID int32,
+) (models.TokenPair, error) {
 	const op = "internal/service/auth.Login"
 	log := a.log.With(
 		slog.String("op", op),
@@ -78,35 +97,97 @@ func (a *Auth) Login(
 		if errors.Is(err, storage.ErrUserNotFound) {
 			log.Warn("User already exist")
 
-			return "", fmt.Errorf("%s, %w", op, &ErrInvalidCredit)
+			return models.TokenPair{}, fmt.Errorf("%s, %w", op, ErrInvalidCredit)
 		}
 		log.Error("User founding error", sl.Err(err))
 
-		return "", fmt.Errorf("%s, %w", op, err)
+		return models.TokenPair{}, fmt.Errorf("%s, %w", op, err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword(user.PassHash, []byte(password)); err != nil {
 		a.log.Info("invalid credentials", sl.Err(err))
 
-		return "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
+		return models.TokenPair{}, fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 	}
 
 	app, err := a.appProvider.App(ctx, appID)
 	if err != nil {
 		log.Error("Get app ID error")
 
-		return "", fmt.Errorf("Get app ID error %s %d %w", op, appID, err)
+		return models.TokenPair{}, fmt.Errorf("get app ID error %s %d %w", op, appID, err)
 	}
 
 	token, err := jwt.NewToken(user, app, a.tokenTTL)
-
 	if err != nil {
 		log.Error("Token generate error")
 
-		return "", fmt.Errorf("Token generate error %s, %s, %d, %w", op, email, app.ID, err)
+		return models.TokenPair{}, fmt.Errorf("token generate error %s, %s, %d, %w", op, email, app.ID, err)
 	}
 
-	return token, nil
+	refresh := refresh.RefreshToken(32)
+	refreshHash := sha256.Sum256([]byte(refresh))
+
+	if err := a.rtStorage.SaveRefreshToken(ctx, user.ID, refreshHash[:],
+		time.Now().Add(a.refreshTokenTTL)); err != nil {
+		log.Error("Fail save refresh token")
+		return models.TokenPair{}, fmt.Errorf("fail save refresh token")
+	}
+
+	return models.TokenPair{
+		Acces:   token,
+		Refresh: refresh,
+	}, nil
+}
+
+func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (models.TokenPair, error) {
+	const op = "internal/service/auth/auth.Refresh"
+	log := a.log.With(
+		slog.String("op:", op),
+	)
+	log.Debug("Start refresh session")
+	refreshTokenHash := sha256.Sum256([]byte(refreshToken))
+	rt, err := a.rtStorage.RefreshToken(ctx, refreshTokenHash[:])
+	if err != nil {
+		if errors.Is(err, storage.ErrRefreshTokenNotFound) {
+			log.Warn("Refresh token not found")
+			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
+		}
+		log.Error("cannot get refresh token")
+		return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
+
+	}
+
+	user, err := a.userProvider.UserByID(ctx, rt.UserID)
+	if err != nil {
+		if errors.Is(err, storage.ErrUserNotFound) {
+			log.Warn("User not found")
+			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
+		}
+		log.Error("cannot get user")
+		return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
+	}
+	app, err := a.appProvider.App(ctx, appID)
+	if err != nil {
+		if errors.Is(err, storage.ErrAppNotFound) {
+			log.Warn("App not found")
+			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
+		}
+		log.Error("Cannot get app")
+		return models.TokenPair{}, fmt.Errorf("cannot geta app %s %w", op, err)
+	}
+
+	token, err := jwt.NewToken(user, app, a.tokenTTL)
+	if err != nil {
+		log.Error("Token generate error")
+
+		return models.TokenPair{}, fmt.Errorf("token generate error %s, %d, %w", op, app.ID, err)
+	}
+
+	return models.TokenPair{
+		Acces:   token,
+		Refresh: refreshToken,
+	}, nil
+
 }
 
 func (a *Auth) RegisterNewUser(
