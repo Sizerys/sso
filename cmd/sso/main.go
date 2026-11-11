@@ -5,10 +5,12 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sso/internal/app"
 	"sso/internal/config"
 	"sso/internal/logger"
 	"sso/internal/storage"
+	"syscall"
 
 	"github.com/joho/godotenv"
 )
@@ -45,6 +47,18 @@ func main() {
 
 	application := app.New(log, cfg.GRPC.Port, cfg.StoragePath, cfg.TokenTTL)
 
-	application.GRPCServer.MustRun()
+	go func() {
+		application.GRPCServer.MustRun()
+	}()
+
+	stop := make(chan os.Signal, 1)
+
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
+	<-stop
+
+	log.Info("gprpc server stoped")
+
+	application.GRPCServer.Stop()
 
 }

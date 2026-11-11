@@ -25,7 +25,6 @@ type Auth struct {
 	userProvider UserProvide
 	appProvider  AppProvider
 	tokenTTL     time.Duration
-	
 }
 
 type SaverUser interface {

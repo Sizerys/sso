@@ -26,11 +26,13 @@ message LoginRequest {
 }
 
 message LoginResponse {
-    string token = 1;
+    string acces_token = 1;
+    string refresh_token = 2;
 }
 
 message LogoutRequest {
-    string token = 1;
+    string acces_token = 1;
+    string refresh_token = 2;
 }
 
 message LogoutResponse {

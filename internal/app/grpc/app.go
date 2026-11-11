@@ -60,8 +60,6 @@ func (g *GRPCAPP) Stop() {
 		slog.Int("port", g.port),
 	)
 
-	g.GRPCServer.GracefulStop()
-
 	log.Info("Server Stop", slog.String("op", op), slog.Int("port", g.port))
 }
 

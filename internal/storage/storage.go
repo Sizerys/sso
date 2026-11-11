@@ -47,7 +47,7 @@ func (p *PostgreSQLWrapper) SaveRefreshToken(ctx context.Context, userID int64, 
 	return SaveRefreshToken(ctx, p.pool, userID, appID, tokenHash, expires)
 }
 
-func (p *PostgreSQLWrapper) RefreshToken(ctx context.Context, userID int64) (*models.Token, error) {
+func (p *PostgreSQLWrapper) RefreshToken(ctx context.Context, userID int64) (*models.RefreshToken, error) {
 	return RefreshToken(ctx, p.pool, userID)
 }
 
@@ -93,8 +93,8 @@ func SaveRefreshToken(ctx context.Context, storage *pgxpool.Pool,
 	return id, nil
 }
 
-func RefreshToken(ctx context.Context, storage *pgxpool.Pool, userID int64) (*models.Token, error) {
-	var token *models.Token
+func RefreshToken(ctx context.Context, storage *pgxpool.Pool, userID int64) (*models.RefreshToken, error) {
+	var token *models.RefreshToken
 	const sqlQuery = `SELECT * FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1;`
 
 	if err := storage.QueryRow(ctx, sqlQuery, userID).Scan(&token); err != nil {
