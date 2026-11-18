@@ -179,7 +179,8 @@ func (x *LoginRequest) GetServiceId() int32 {
 
 type LoginResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	AccesToken    string                 `protobuf:"bytes,1,opt,name=acces_token,json=accesToken,proto3" json:"acces_token,omitempty"`
+	RefreshToken  string                 `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -214,16 +215,24 @@ func (*LoginResponse) Descriptor() ([]byte, []int) {
 	return file_sso_sso_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *LoginResponse) GetToken() string {
+func (x *LoginResponse) GetAccesToken() string {
 	if x != nil {
-		return x.Token
+		return x.AccesToken
+	}
+	return ""
+}
+
+func (x *LoginResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
 	}
 	return ""
 }
 
 type LogoutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	AccesToken    string                 `protobuf:"bytes,1,opt,name=acces_token,json=accesToken,proto3" json:"acces_token,omitempty"`
+	RefreshToken  string                 `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -258,9 +267,16 @@ func (*LogoutRequest) Descriptor() ([]byte, []int) {
 	return file_sso_sso_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *LogoutRequest) GetToken() string {
+func (x *LogoutRequest) GetAccesToken() string {
 	if x != nil {
-		return x.Token
+		return x.AccesToken
+	}
+	return ""
+}
+
+func (x *LogoutRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
 	}
 	return ""
 }
@@ -323,11 +339,15 @@ const file_sso_sso_proto_rawDesc = "" +
 	"\tuser_name\x18\x01 \x01(\tR\buserName\x12#\n" +
 	"\ruser_password\x18\x02 \x01(\tR\fuserPassword\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x03 \x01(\x05R\tserviceId\"%\n" +
-	"\rLoginResponse\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"%\n" +
-	"\rLogoutRequest\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"(\n" +
+	"service_id\x18\x03 \x01(\x05R\tserviceId\"U\n" +
+	"\rLoginResponse\x12\x1f\n" +
+	"\vacces_token\x18\x01 \x01(\tR\n" +
+	"accesToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\"U\n" +
+	"\rLogoutRequest\x12\x1f\n" +
+	"\vacces_token\x18\x01 \x01(\tR\n" +
+	"accesToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\"(\n" +
 	"\x0eLogoutResponse\x12\x16\n" +
 	"\x06succes\x18\x01 \x01(\tR\x06succes2\xa8\x01\n" +
 	"\x04Auth\x129\n" +

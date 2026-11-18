@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sso/internal/config"
 	"sso/internal/domain/models"
 	sl "sso/internal/lib/error"
 	"sso/internal/lib/jwt"
@@ -14,7 +13,6 @@ import (
 	"sso/internal/storage"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -27,32 +25,31 @@ type Auth struct {
 	saverUser       SaverUser
 	userProvider    UserProvider
 	appProvider     AppProvider
-	rtStorage       RefreshTokenStorage
-	tokenTTL        time.Duration
+	rtProvider      RefreshTokenProvider
+	accesTokenTTL   time.Duration
 	refreshTokenTTL time.Duration
 }
 
 type SaverUser interface {
 	SaveUser(
+		ctx context.Context,
 		email string,
 		passHash []byte,
 	) (int64, error)
 }
 
-type RefreshTokenStorage interface {
+type RefreshTokenProvider interface {
 	SaveRefreshToken(ctx context.Context, userID int64,
 		tokenHash []byte, expires time.Time) error
-	RefreshToken(ctx context.Context, refreshToken []byte) (*models.RefreshToken, error)
+	RefreshToken(ctx context.Context, refreshToken []byte) (models.RefreshToken, error)
 	RevokeRefreshToken(ctx context.Context, userID int64) (int64, error)
-	RevokeAllUsersRefreshToken(ctx context.Context, storage *pgxpool.Pool) error
-	UserByID(ctx context.Context, storage *pgxpool.Pool,
-		email string) (models.User, error)
+	RevokeAllUsersRefreshToken(ctx context.Context) error
 }
 
 type UserProvider interface {
 	User(ctx context.Context, email string) (models.User, error)
+	IsAdmin(ctx context.Context, ID int64) (bool, error)
 	UserByID(ctx context.Context, userID int64) (models.User, error)
-	isAdmin(ctx context.Context, ID int64) (bool, error)
 }
 
 type AppProvider interface {
@@ -64,17 +61,19 @@ func New(
 	saverUser SaverUser,
 	userProvider UserProvider,
 	appProvider AppProvider,
-	rtStorage RefreshTokenStorage,
-	cfg config.Config,
+	rtProvider RefreshTokenProvider,
+	accesTokenTTL time.Duration,
+	refreshTokenTTL time.Duration,
+
 ) *Auth {
 	return &Auth{
 		log:             log,
 		saverUser:       saverUser,
 		userProvider:    userProvider,
 		appProvider:     appProvider,
-		rtStorage:       rtStorage,
-		tokenTTL:        cfg.TokenTTL,
-		refreshTokenTTL: cfg.RefreshTokenTTL,
+		rtProvider:      rtProvider,
+		accesTokenTTL:   accesTokenTTL,
+		refreshTokenTTL: refreshTokenTTL,
 	}
 }
 
@@ -107,7 +106,7 @@ func (a *Auth) Login(
 	if err := bcrypt.CompareHashAndPassword(user.PassHash, []byte(password)); err != nil {
 		a.log.Info("invalid credentials", sl.Err(err))
 
-		return models.TokenPair{}, fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
+		return models.TokenPair{}, fmt.Errorf("%s: %w", op, ErrInvalidCredit)
 	}
 
 	app, err := a.appProvider.App(ctx, appID)
@@ -117,7 +116,7 @@ func (a *Auth) Login(
 		return models.TokenPair{}, fmt.Errorf("get app ID error %s %d %w", op, appID, err)
 	}
 
-	token, err := jwt.NewToken(user, app, a.tokenTTL)
+	token, err := jwt.NewToken(user, app, a.accesTokenTTL)
 	if err != nil {
 		log.Error("Token generate error")
 
@@ -127,7 +126,7 @@ func (a *Auth) Login(
 	refresh := refresh.RefreshToken(32)
 	refreshHash := sha256.Sum256([]byte(refresh))
 
-	if err := a.rtStorage.SaveRefreshToken(ctx, user.ID, refreshHash[:],
+	if err := a.rtProvider.SaveRefreshToken(ctx, user.ID, refreshHash[:],
 		time.Now().Add(a.refreshTokenTTL)); err != nil {
 		log.Error("Fail save refresh token")
 		return models.TokenPair{}, fmt.Errorf("fail save refresh token")
@@ -146,7 +145,13 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 	)
 	log.Debug("Start refresh session")
 	refreshTokenHash := sha256.Sum256([]byte(refreshToken))
-	rt, err := a.rtStorage.RefreshToken(ctx, refreshTokenHash[:])
+	rt, err := a.rtProvider.RefreshToken(ctx, refreshTokenHash[:])
+	if valid := rt.IsValid(); valid != true {
+		log.Warn("refresh token is not valid")
+		slog.Bool("IsExpired", rt.IsExpired())
+		slog.Bool("IsReovked", rt.IsRevoked())
+		return models.TokenPair{}, fmt.Errorf("%s %w", op, storage.ErrInvalidCredentials)
+	}
 	if err != nil {
 		if errors.Is(err, storage.ErrRefreshTokenNotFound) {
 			log.Warn("Refresh token not found")
@@ -176,7 +181,7 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 		return models.TokenPair{}, fmt.Errorf("cannot geta app %s %w", op, err)
 	}
 
-	token, err := jwt.NewToken(user, app, a.tokenTTL)
+	token, err := jwt.NewToken(user, app, a.accesTokenTTL)
 	if err != nil {
 		log.Error("Token generate error")
 
@@ -191,7 +196,7 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 }
 
 func (a *Auth) RegisterNewUser(
-	context context.Context,
+	ctx context.Context,
 	email string,
 	password string,
 ) (int64, error) {
@@ -210,7 +215,7 @@ func (a *Auth) RegisterNewUser(
 		return 0, fmt.Errorf("Hashing password error %s %w", op, err)
 	}
 
-	id, err := a.saverUser.SaveUser(email, passHash)
+	id, err := a.saverUser.SaveUser(ctx, email, passHash)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserExist) {
 			log.Warn("User already exist")
@@ -225,7 +230,7 @@ func (a *Auth) RegisterNewUser(
 	return id, nil
 }
 
-func (a *Auth) isAdmin(ctx context.Context, ID int64) (bool, error) {
+func (a *Auth) IsAdmin(ctx context.Context, ID int64) (bool, error) {
 	const op = "internal/service/auth.Login"
 
 	log := a.log.With(
@@ -233,7 +238,7 @@ func (a *Auth) isAdmin(ctx context.Context, ID int64) (bool, error) {
 		slog.Int64("ID", ID),
 	)
 
-	isAdmin, err := a.userProvider.isAdmin(ctx, ID)
+	isAdmin, err := a.userProvider.IsAdmin(ctx, ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
 			log.Warn("User does not exist", sl.Err(err))

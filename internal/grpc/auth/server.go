@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"sso/internal/domain/models"
+	"sso/internal/service/auth"
 	ssov1 "sso/protos/gen/go/sso"
 
 	"google.golang.org/grpc"
@@ -9,14 +12,34 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const EmptyID = 0
+type Auth interface {
+	Login(
+		ctx context.Context,
+		email string,
+		password string,
+		appID int32,
+	) (models.TokenPair, error)
+	Refresh(ctx context.Context,
+		refreshToken string,
+		appID int32,
+	) (models.TokenPair, error)
+	RegisterNewUser(
+		context context.Context,
+		email string,
+		password string,
+	) (int64, error)
+	IsAdmin(ctx context.Context, ID int64) (bool, error)
+}
 
 type serverAPI struct {
 	ssov1.UnimplementedAuthServer
+	auth Auth
 }
 
-func Register(gRPCServer *grpc.Server) {
-	ssov1.RegisterAuthServer(gRPCServer, &serverAPI{})
+const EmptyID = 0
+
+func Register(gRPCServer *grpc.Server, auth Auth) {
+	ssov1.RegisterAuthServer(gRPCServer, &serverAPI{auth: auth})
 }
 
 func (s *serverAPI) Login(
@@ -35,8 +58,18 @@ func (s *serverAPI) Login(
 		return nil, status.Error(codes.InvalidArgument, "service id required")
 	}
 
-	// Убрать первый nil
-	return nil, nil
+	pairtoken, err := s.auth.Login(ctx, req.GetUserName(), req.GetUserPassword(), req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredit) {
+			return nil, status.Error(codes.Unauthenticated, "invalid email or password")
+		}
+		return nil, status.Error(codes.Internal, "login error")
+	}
+
+	return &ssov1.LoginResponse{
+		AccesToken:   pairtoken.Acces,
+		RefreshToken: pairtoken.Refresh,
+	}, nil
 }
 
 func (s *serverAPI) Logout(

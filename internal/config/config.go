@@ -11,7 +11,7 @@ import (
 
 type Config struct {
 	Env             string        `yaml:"env" env-default:"local"`
-	StoragePath     string        `yaml:"storage_path" env-requierd:"true"`
+	StoragePath     string        `yaml:"storage_path" env:"STORAGE_PATH" env-required:"true"`
 	GRPC            GRPC          `yaml:"grpc" env-required:"true"`
 	TokenTTL        time.Duration `yaml:"token_ttl" env-default:"0.25h"`
 	RefreshTokenTTL time.Duration `yaml:"refresh_token_ttl" env-default:"720h"`
@@ -49,6 +49,14 @@ func MustLoadPath(configPath, storagePath string) *Config {
 		log.Fatal("does not read config")
 	}
 
+	if storagePath != "" {
+		config.StoragePath = storagePath
+	}
+
+	if config.StoragePath == "" {
+		log.Fatal("storage path is required (YAML, STORAGE_PATH env, or -storage-path flag)")
+	}
+
 	return &config
 }
 
@@ -64,7 +72,7 @@ func fetchPath() (string, string) {
 	}
 
 	if storagePath == "" {
-		configPath = os.Getenv("STORAGE_PATH")
+		storagePath = os.Getenv("STORAGE_PATH")
 	}
 
 	return configPath, storagePath

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"sso/internal/grpc/auth"
+	authServ "sso/internal/service/auth"
 
 	"google.golang.org/grpc"
 )
@@ -18,15 +19,15 @@ type GRPCAPP struct {
 func New(
 	log *slog.Logger,
 	port int,
+	authService *authServ.Auth,
 ) *GRPCAPP {
 	GRPCServer := grpc.NewServer()
-
-	auth.Register(GRPCServer)
+	auth.Register(GRPCServer, authService)
 
 	return &GRPCAPP{
 		log:        log,
 		GRPCServer: GRPCServer,
-		port:       44044,
+		port:       port,
 	}
 
 }
@@ -38,7 +39,7 @@ func (g *GRPCAPP) Run() error {
 		slog.Int("port", g.port),
 	)
 
-	l, err := net.Listen("tcp", fmt.Sprintf("%d", g.port))
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", g.port))
 	if err != nil {
 		return fmt.Errorf("%s %w", op, err)
 	}
@@ -63,11 +64,9 @@ func (g *GRPCAPP) Stop() {
 	log.Info("Server Stop", slog.String("op", op), slog.Int("port", g.port))
 }
 
-func (g GRPCAPP) MustRun() error {
+func (g GRPCAPP) MustRun() {
 	err := g.Run()
 	if err != nil {
 		panic("start grpc server error")
 	}
-
-	return nil
 }

@@ -27,6 +27,7 @@ func main() {
 	log.Info("logger start")
 
 	log.Debug("debug logger start")
+	log.Info("config loaded", slog.String("storage_path", cfg.StoragePath))
 
 	ctx := context.Background()
 
@@ -45,7 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	application := app.New(log, cfg.GRPC.Port, cfg.StoragePath, cfg.TokenTTL)
+	application := app.New(log, cfg.GRPC.Port, storagePostgreSQL, cfg.TokenTTL, cfg.RefreshTokenTTL)
 
 	go func() {
 		application.GRPCServer.MustRun()
