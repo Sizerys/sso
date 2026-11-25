@@ -20,24 +20,15 @@ func (p *PostgreSQLWrapper) RefreshToken(ctx context.Context, refreshToken []byt
 	return RefreshToken(ctx, p.pool, refreshToken)
 }
 
-func (p *PostgreSQLWrapper) RevokeRefreshToken(ctx context.Context, userID int64) (int64, error) {
-	return RevokeRefreshToken(ctx, p.pool, userID)
-}
-
-func (p *PostgreSQLWrapper) RevokeAllUsersRefreshToken(ctx context.Context) error {
-	return RevokeAllUsersRefreshToken(ctx, p.pool)
-}
-
-func (p *PostgreSQLWrapper) UserByID(ctx context.Context, userID int64) (models.User, error) {
-	return UserByID(ctx, p.pool, userID)
-}
-
 func SaveRefreshToken(ctx context.Context, storage *pgxpool.Pool,
 	userID int64, tokenHash []byte, expires time.Time) error {
 	const op = `internal/storage/tokens.SaveRefreshToken`
 	const sqlQuery = `INSERT INTO refresh_tokens 
 	(user_id, token_hash, created_at, expires_at, revoked_at) VALUES($1, $2, NOW(), $3, NULL);`
-	_, err := storage.Exec(ctx, sqlQuery, userID, tokenHash, expires)
+	tag, err := storage.Exec(ctx, sqlQuery, userID, tokenHash, expires)
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("refresh token already exists %s %w", op, er.ErrRefreshTokenAlreadyExists)
+	}
 	if err != nil {
 		return fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
@@ -61,12 +52,26 @@ func RefreshToken(ctx context.Context, storage *pgxpool.Pool, refreshToken []byt
 	return t, nil
 }
 
-func RevokeRefreshToken(ctx context.Context, storage *pgxpool.Pool, userID int64) (int64, error) {
+func (p *PostgreSQLWrapper) RevokeRefreshToken(ctx context.Context, tokenHash []byte) (int64, error) {
 	const op = `internal/storage/tokens.RevokeRefreshToken`
-	const sqlQuery = `UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;`
-	tag, err := storage.Exec(ctx, sqlQuery, userID)
+	const sqlQuery = `UPDATE refresh_tokens SET revoked_at = NOW()
+                      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW()`
+
+	tag, err := p.pool.Exec(ctx, sqlQuery, tokenHash)
 	if err != nil {
-		return 0, fmt.Errorf("Cannot execute sql query %s %w", op, err)
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (p *PostgreSQLWrapper) RevokeUserRefreshTokens(ctx context.Context, userID int64) (int64, error) {
+	const op = `internal/storage/tokens.RevokeUserRefreshTokens`
+	const sqlQuery = `UPDATE refresh_tokens SET revoked_at = NOW()
+                      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()`
+
+	tag, err := p.pool.Exec(ctx, sqlQuery, userID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 	return tag.RowsAffected(), nil
 }
@@ -79,17 +84,4 @@ func RevokeAllUsersRefreshToken(ctx context.Context, storage *pgxpool.Pool) erro
 		return fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
 	return nil
-}
-
-func UserByID(ctx context.Context, storage *pgxpool.Pool, userID int64) (models.User, error) {
-	const op = `internal/storage/tokens.UserByID`
-	var user models.User
-	const sqlQuery = `SELECT id, email, pass_hash FROM refresh_tokens WHERE user_id = $1;`
-	if err := storage.QueryRow(ctx, sqlQuery, userID).Scan(&user.ID, &user.Email, &user.PassHash); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return models.User{}, fmt.Errorf("%s %s %w", op, er.ErrUserNotFound, err)
-		}
-		return models.User{}, fmt.Errorf("cannot execute sql query %s %w", op, err)
-	}
-	return user, nil
 }

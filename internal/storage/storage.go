@@ -50,6 +50,10 @@ func (p *PostgreSQLWrapper) IsAdmin(ctx context.Context, id int64) (bool, error)
 	return IsAdmin(ctx, p.pool, id)
 }
 
+func (p *PostgreSQLWrapper) UserByID(ctx context.Context, userID int64) (models.User, error) {
+	return UserByID(ctx, p.pool, userID)
+}
+
 func SaveUser(ctx context.Context, storage *pgxpool.Pool, email string, passHash []byte) (int64, error) {
 	const op = `internal/storage/storage.SaveUser`
 	const sqlQuery = "INSERT INTO users (email, pass_hash) VALUES($1, $2) RETURNING id;"
@@ -143,4 +147,17 @@ func Connect(ctx context.Context, dbPath string) (*pgxpool.Pool, error) {
 
 	return pool, nil
 
+}
+
+func UserByID(ctx context.Context, storage *pgxpool.Pool, userID int64) (models.User, error) {
+	const op = `internal/storage/tokens.UserByID`
+	var user models.User
+	const sqlQuery = `SELECT id, email, pass_hash FROM refresh_tokens WHERE user_id = $1;`
+	if err := storage.QueryRow(ctx, sqlQuery, userID).Scan(&user.ID, &user.Email, &user.PassHash); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.User{}, fmt.Errorf("%s %s %w", op, er.ErrUserNotFound, err)
+		}
+		return models.User{}, fmt.Errorf("cannot execute sql query %s %w", op, err)
+	}
+	return user, nil
 }

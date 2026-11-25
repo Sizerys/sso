@@ -30,6 +30,7 @@ type Auth struct {
 	refreshTokenTTL time.Duration
 }
 
+//go:generate go run go.uber.org/mock/mockgen@latest -source=auth.go -destination=../mocks/auth_mock.go -package=mocks
 type SaverUser interface {
 	SaveUser(
 		ctx context.Context,
@@ -42,8 +43,8 @@ type RefreshTokenProvider interface {
 	SaveRefreshToken(ctx context.Context, userID int64,
 		tokenHash []byte, expires time.Time) error
 	RefreshToken(ctx context.Context, refreshToken []byte) (models.RefreshToken, error)
-	RevokeRefreshToken(ctx context.Context, userID int64) (int64, error)
-	RevokeAllUsersRefreshToken(ctx context.Context) error
+	RevokeRefreshToken(ctx context.Context, refreshHash []byte) (int64, error)
+	RevokeUserRefreshTokens(ctx context.Context, ID int64) (int64, error)
 }
 
 type UserProvider interface {
@@ -111,6 +112,11 @@ func (a *Auth) Login(
 
 	app, err := a.appProvider.App(ctx, appID)
 	if err != nil {
+		if errors.Is(err, er.ErrAppNotFound) {
+			log.Warn("App not found")
+
+			return models.TokenPair{}, fmt.Errorf("app not found %s %w", op, err)
+		}
 		log.Error("Get app ID error")
 
 		return models.TokenPair{}, fmt.Errorf("get app ID error %s %d %w", op, appID, err)
@@ -128,8 +134,13 @@ func (a *Auth) Login(
 
 	if err := a.rtProvider.SaveRefreshToken(ctx, user.ID, refreshHash[:],
 		time.Now().Add(a.refreshTokenTTL)); err != nil {
-		log.Error("Fail save refresh token")
-		return models.TokenPair{}, fmt.Errorf("fail save refresh token")
+		if errors.Is(err, er.ErrRefreshTokenAlreadyExists) {
+			log.Warn("refresh token already exists")
+
+			return models.TokenPair{}, fmt.Errorf("refresh token already exists %s %w", op, err)
+		}
+		log.Error("fail save refresh token")
+		return models.TokenPair{}, fmt.Errorf("fail save refresh token %s %w", op, err)
 	}
 
 	return models.TokenPair{
@@ -230,54 +241,42 @@ func (a *Auth) RegisterNewUser(
 	return id, nil
 }
 
-func (a *Auth) Logout(ctx context.Context, rt []byte) error {
+func (a *Auth) Logout(ctx context.Context, refreshToken string) error {
 	const op = "internal/service/auth.Logout"
 
-	log := a.log.With(
-		slog.String("op:", op),
-	)
-	log.Info("Logout start session")
-	refresh, err := a.rtProvider.RefreshToken(ctx, rt)
+	log := a.log.With(slog.String("op", op))
+	log.Info("logout")
+
+	hash := sha256.Sum256([]byte(refreshToken))
+
+	rows, err := a.rtProvider.RevokeRefreshToken(ctx, hash[:])
 	if err != nil {
-		if errors.Is(err, er.ErrRefreshTokenNotFound) {
-			log.Warn("refresh token not found")
-			return fmt.Errorf("refresh token is not found %s %w", op, err)
-		}
-		log.Error("getting refresh token error")
-		return fmt.Errorf("getting refresh token %s %w", op, err)
+		log.Error("failed to revoke refresh token", sl.Err(err))
+		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	if !refresh.IsValid() {
-		log.Warn("refresh token is not valid")
-		return fmt.Errorf("refresh token is not valid %s %w", op, er.ErrInvalidCredentials)
-	}
-
-	rows, err := a.rtProvider.RevokeRefreshToken(ctx, refresh.UserID)
 	if rows == 0 {
-		log.Warn("Refresh Token by id not found")
-		return fmt.Errorf("refresh token by id not found, %s %w", op, er.ErrRefreshTokenByIDNotFound)
-	}
-	if err != nil {
-		log.Error("Logout error")
-		return fmt.Errorf("Logout error %s %w", op, err)
+		log.Warn("no active refresh token to revoke")
 	}
 
-	log.Info("Logout succesful", slog.Int64("userID:", refresh.UserID))
 	return nil
 }
-
-func (a *Auth) LogoutAllUsers(ctx context.Context) error {
-	const op = "internal/service/auth.LogoutAllUsers"
+func (a *Auth) LogoutAll(ctx context.Context, userID int64) error {
+	const op = "internal/service/auth.LogoutAll"
 
 	log := a.log.With(
-		slog.String("op:", op),
+		slog.String("op", op),
+		slog.Int64("user_id", userID),
 	)
-	log.Info("Logout all users start session")
+	log.Info("logout all")
 
-	if err := a.rtProvider.RevokeAllUsersRefreshToken(ctx); err != nil {
-		log.Error("Logout all users error")
-		return fmt.Errorf("Logout all users error %s %w", op, err)
+	rows, err := a.rtProvider.RevokeUserRefreshTokens(ctx, userID)
+	if err != nil {
+		log.Error("failed to revoke user refresh tokens", sl.Err(err))
+		return fmt.Errorf("%s: %w", op, err)
 	}
+
+	log.Info("revoked sessions", slog.Int64("count", rows))
 	return nil
 }
 
