@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	er "sso/internal/domain/errors"
 	"sso/internal/domain/models"
 	sl "sso/internal/lib/error"
 	"sso/internal/lib/jwt"
 	"sso/internal/lib/refresh"
-	"sso/internal/storage"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -93,7 +93,7 @@ func (a *Auth) Login(
 
 	user, err := a.userProvider.User(ctx, email)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserNotFound) {
+		if errors.Is(err, er.ErrUserNotFound) {
 			log.Warn("User already exist")
 
 			return models.TokenPair{}, fmt.Errorf("%s, %w", op, ErrInvalidCredit)
@@ -150,10 +150,10 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 		log.Warn("refresh token is not valid")
 		slog.Bool("IsExpired", rt.IsExpired())
 		slog.Bool("IsReovked", rt.IsRevoked())
-		return models.TokenPair{}, fmt.Errorf("%s %w", op, storage.ErrInvalidCredentials)
+		return models.TokenPair{}, fmt.Errorf("%s %w", op, er.ErrInvalidCredentials)
 	}
 	if err != nil {
-		if errors.Is(err, storage.ErrRefreshTokenNotFound) {
+		if errors.Is(err, er.ErrRefreshTokenNotFound) {
 			log.Warn("Refresh token not found")
 			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
 		}
@@ -164,7 +164,7 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 
 	user, err := a.userProvider.UserByID(ctx, rt.UserID)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserNotFound) {
+		if errors.Is(err, er.ErrUserNotFound) {
 			log.Warn("User not found")
 			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
 		}
@@ -173,7 +173,7 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int32) (m
 	}
 	app, err := a.appProvider.App(ctx, appID)
 	if err != nil {
-		if errors.Is(err, storage.ErrAppNotFound) {
+		if errors.Is(err, er.ErrAppNotFound) {
 			log.Warn("App not found")
 			return models.TokenPair{}, fmt.Errorf("%s %w", op, err)
 		}
@@ -206,7 +206,7 @@ func (a *Auth) RegisterNewUser(
 		slog.String("op", op),
 	)
 
-	log.Info("Register new user seccion start")
+	log.Info("Register new user session start")
 
 	passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -217,7 +217,7 @@ func (a *Auth) RegisterNewUser(
 
 	id, err := a.saverUser.SaveUser(ctx, email, passHash)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserExist) {
+		if errors.Is(err, er.ErrUserExist) {
 			log.Warn("User already exist")
 
 			return 0, fmt.Errorf("%s %w", op, err)
@@ -230,6 +230,57 @@ func (a *Auth) RegisterNewUser(
 	return id, nil
 }
 
+func (a *Auth) Logout(ctx context.Context, rt []byte) error {
+	const op = "internal/service/auth.Logout"
+
+	log := a.log.With(
+		slog.String("op:", op),
+	)
+	log.Info("Logout start session")
+	refresh, err := a.rtProvider.RefreshToken(ctx, rt)
+	if err != nil {
+		if errors.Is(err, er.ErrRefreshTokenNotFound) {
+			log.Warn("refresh token not found")
+			return fmt.Errorf("refresh token is not found %s %w", op, err)
+		}
+		log.Error("getting refresh token error")
+		return fmt.Errorf("getting refresh token %s %w", op, err)
+	}
+
+	if !refresh.IsValid() {
+		log.Warn("refresh token is not valid")
+		return fmt.Errorf("refresh token is not valid %s %w", op, er.ErrInvalidCredentials)
+	}
+
+	rows, err := a.rtProvider.RevokeRefreshToken(ctx, refresh.UserID)
+	if rows == 0 {
+		log.Warn("Refresh Token by id not found")
+		return fmt.Errorf("refresh token by id not found, %s %w", op, er.ErrRefreshTokenByIDNotFound)
+	}
+	if err != nil {
+		log.Error("Logout error")
+		return fmt.Errorf("Logout error %s %w", op, err)
+	}
+
+	log.Info("Logout succesful", slog.Int64("userID:", refresh.UserID))
+	return nil
+}
+
+func (a *Auth) LogoutAllUsers(ctx context.Context) error {
+	const op = "internal/service/auth.LogoutAllUsers"
+
+	log := a.log.With(
+		slog.String("op:", op),
+	)
+	log.Info("Logout all users start session")
+
+	if err := a.rtProvider.RevokeAllUsersRefreshToken(ctx); err != nil {
+		log.Error("Logout all users error")
+		return fmt.Errorf("Logout all users error %s %w", op, err)
+	}
+	return nil
+}
+
 func (a *Auth) IsAdmin(ctx context.Context, ID int64) (bool, error) {
 	const op = "internal/service/auth.Login"
 
@@ -240,7 +291,7 @@ func (a *Auth) IsAdmin(ctx context.Context, ID int64) (bool, error) {
 
 	isAdmin, err := a.userProvider.IsAdmin(ctx, ID)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserNotFound) {
+		if errors.Is(err, er.ErrUserNotFound) {
 			log.Warn("User does not exist", sl.Err(err))
 
 			return false, fmt.Errorf("%s %w", op, err)

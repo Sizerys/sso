@@ -2,12 +2,13 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	er "sso/internal/domain/errors"
 	"sso/internal/domain/models"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -51,8 +52,8 @@ func RefreshToken(ctx context.Context, storage *pgxpool.Pool, refreshToken []byt
 
 	if err := storage.QueryRow(ctx, sqlQuery, refreshToken).Scan(&t.ID, &t.UserID, &t.TokenHash,
 		&t.CreatedAt, &t.ExpiredAt, &t.RevokedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.RefreshToken{}, fmt.Errorf("%s %s %w", op, ErrRefreshTokenNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.RefreshToken{}, fmt.Errorf("%s %s %w", op, er.ErrRefreshTokenNotFound, err)
 		}
 		return models.RefreshToken{}, fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
@@ -63,11 +64,11 @@ func RefreshToken(ctx context.Context, storage *pgxpool.Pool, refreshToken []byt
 func RevokeRefreshToken(ctx context.Context, storage *pgxpool.Pool, userID int64) (int64, error) {
 	const op = `internal/storage/tokens.RevokeRefreshToken`
 	const sqlQuery = `UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;`
-	res, err := storage.Exec(ctx, sqlQuery, userID)
+	tag, err := storage.Exec(ctx, sqlQuery, userID)
 	if err != nil {
 		return 0, fmt.Errorf("Cannot execute sql query %s %w", op, err)
 	}
-	return res.RowsAffected(), nil
+	return tag.RowsAffected(), nil
 }
 
 func RevokeAllUsersRefreshToken(ctx context.Context, storage *pgxpool.Pool) error {
@@ -85,25 +86,10 @@ func UserByID(ctx context.Context, storage *pgxpool.Pool, userID int64) (models.
 	var user models.User
 	const sqlQuery = `SELECT id, email, pass_hash FROM refresh_tokens WHERE user_id = $1;`
 	if err := storage.QueryRow(ctx, sqlQuery, userID).Scan(&user.ID, &user.Email, &user.PassHash); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.User{}, fmt.Errorf("%s %s %w", op, ErrUserNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.User{}, fmt.Errorf("%s %s %w", op, er.ErrUserNotFound, err)
 		}
 		return models.User{}, fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
 	return user, nil
 }
-
-/*
-
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash BYTEA NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT now(),
-    expires_at TIMESTAMP NOT NULL,
-    revoked_at TIMESTAMP
-);
-*/
-/*
-DROP TABLE IF EXISTS refresh_tokens;
-*/

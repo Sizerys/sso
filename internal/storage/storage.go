@@ -2,21 +2,13 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	er "sso/internal/domain/errors"
 	"sso/internal/domain/models"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-var (
-	ErrUserNotFound         = errors.New("User not found")
-	ErrInvalidCredentials   = errors.New("Invalid credentials")
-	ErrUserExist            = errors.New("User already exist")
-	ErrRefreshTokenNotFound = errors.New("Refresh token not found")
-	ErrSecretNotFound       = errors.New("Secrets not found")
-	ErrAppNotFound          = errors.New("App not found")
 )
 
 type PostgreSQLWrapper struct {
@@ -75,8 +67,8 @@ func UserPassHash(ctx context.Context, storage *pgxpool.Pool, email string) ([]b
 	const sqlQuery = `SELECT pass_hash FROM users WHERE email = $1;`
 	var passHash []byte
 	if err := storage.QueryRow(ctx, sqlQuery, email).Scan(&passHash); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%s %s %w", op, ErrUserNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%s %s %w", op, er.ErrUserNotFound, err)
 		}
 		return nil, fmt.Errorf("сannot execute sql query %s %w", op, err)
 	}
@@ -89,8 +81,8 @@ func AppSecret(ctx context.Context, storage *pgxpool.Pool, name string) (string,
 	var secret string
 	const sqlQuery = `SELECT secret FROM apps WHERE name = $1;`
 	if err := storage.QueryRow(ctx, sqlQuery, name).Scan(&secret); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("%s %s %w", op, ErrSecretNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("%s %s %w", op, er.ErrSecretNotFound, err)
 		}
 		return "", fmt.Errorf("сannot execute sql query %x %w", op, err)
 	}
@@ -101,10 +93,10 @@ func AppSecret(ctx context.Context, storage *pgxpool.Pool, name string) (string,
 func App(ctx context.Context, storage *pgxpool.Pool, appID int32) (models.App, error) {
 	const op = `internal/storage/storage.App`
 	var app models.App
-	const sqlQuery = `SELECT * FROM apps WHERE id = $1;`
+	const sqlQuery = `SELECT id, name, secret FROM apps WHERE id = $1;`
 	if err := storage.QueryRow(ctx, sqlQuery, appID).Scan(&app.ID, &app.Name, &app.Secret); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.App{}, fmt.Errorf("%s %s %w", op, ErrAppNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.App{}, fmt.Errorf("%s %s %w", op, er.ErrAppNotFound, err)
 		}
 		return models.App{}, fmt.Errorf("сannot execute sql query %s %w", op, err)
 	}
@@ -116,8 +108,8 @@ func IsAdmin(ctx context.Context, storage *pgxpool.Pool, id int64) (bool, error)
 	const sqlQuery = `SELECT is_admin FROM users WHERE id = $1;`
 	var isAdmin bool
 	if err := storage.QueryRow(ctx, sqlQuery, id).Scan(&isAdmin); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, fmt.Errorf("%s %w %w", op, ErrUserNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("%s %w %w", op, er.ErrUserNotFound, err)
 		}
 		return false, fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
@@ -130,8 +122,8 @@ func User(ctx context.Context, storage *pgxpool.Pool, email string) (models.User
 	const sqlQuery = `SELECT id, email, pass_hash FROM users WHERE email = $1;`
 	var user models.User
 	if err := storage.QueryRow(ctx, sqlQuery).Scan(&user.ID, &user.Email, &user.PassHash); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.User{}, fmt.Errorf("%s %s %w", op, ErrUserNotFound, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.User{}, fmt.Errorf("%s %s %w", op, er.ErrUserNotFound, err)
 		}
 		return models.User{}, fmt.Errorf("cannot execute sql query %s %w", op, err)
 	}
